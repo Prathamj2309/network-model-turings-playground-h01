@@ -40,17 +40,23 @@ class Sender:
                 rtt = current_time - pkt.send_time
                 self.rtt_samples.append(rtt)
 
-    def detect_loss(self):
+    def detect_loss(self, current_time, timeout=10):
         """
-        Infer packet loss: packets that have been
-        in flight for too long are considered lost.
+        Infer packet loss using a simple timeout.
         """
-        # Simple heuristic: everything still in flight
-        # after this step is considered lost
-        lost = len(self.in_flight)
+        still_in_flight = []
+        lost = 0
+
+        for pkt in self.in_flight:
+            if current_time - pkt.send_time > timeout:
+                lost += 1
+            else:
+                still_in_flight.append(pkt)
+
+        self.in_flight = still_in_flight
         self.lost_packets += lost
-        self.in_flight.clear()
         return lost
+
 
     def get_metrics(self):
         """
