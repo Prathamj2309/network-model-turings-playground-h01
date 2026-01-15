@@ -1,106 +1,106 @@
-# 🧠 Antar-Drishti TCP – Reinforcement Learning Congestion Control for Wireless Networks
+# Antar‑Drishti TCP – Reinforcement Learning Congestion Control for Wireless Networks
 
-> *"See the real obstacles. Ignore the illusions."*
+*See the real obstacles. Ignore the illusions.*
 
-Antar-Drishti TCP is a lightweight **Reinforcement Learning–based TCP Congestion Control agent** designed to operate in noisy modern wireless networks (5G / Wi‑Fi). Unlike traditional TCP variants (e.g., Reno, Cubic), it learns to distinguish between **random packet loss caused by interference** and **true congestion**, allowing it to maintain high throughput while keeping latency low.
+Antar‑Drishti TCP is a lightweight **reinforcement‑learning–based TCP congestion control agent** designed for noisy wireless networks such as 5G and Wi‑Fi. Unlike traditional TCP variants (Reno, Cubic, etc.), it learns to distinguish between **random packet loss caused by wireless interference** and **true congestion**, allowing it to maintain high throughput while keeping latency low.
 
 ---
 
-## 🚀 Problem Overview
+## Problem Overview
 
 Legacy TCP protocols assume:
 
-> Packet loss = Network congestion ❌
+> Packet loss = network congestion
 
 In wireless networks:
 
-> Packet loss = Congestion **or** Signal noise ✅
+> Packet loss = congestion *or* signal noise
 
 This incorrect assumption leads to:
 
 * Unnecessary reduction in sending rate
 * Poor throughput
-* High latency
+* Increased latency
 * Underutilized bandwidth
 
-Antar-Drishti TCP replaces the congestion control logic with an **AI agent** that learns optimal rate control behavior under uncertainty.
+Antar‑Drishti TCP replaces the congestion‑window update logic with an AI agent that learns optimal rate control behavior under uncertainty.
 
 ---
 
-## 🎯 Objectives
+## Objectives
 
-* Maximize **throughput**
-* Minimize **latency**
-* Remain stable under **1–5% random packet corruption**
-* Operate using **sender-side information only**
-* Stay within strict **resource limits**
+* Maximize throughput
+* Minimize latency
+* Remain stable under 1–5% random packet corruption
+* Operate using sender‑side information only
+* Stay within strict resource limits
 
 ---
 
-## ⚔️ The Adversary (Simulation Environment)
+## Adversary (Simulation Environment)
 
-* Wireless link randomly corrupts **1–5% of packets**
+* Wireless link randomly corrupts 1–5% of packets
 * Congestion may occur due to competing traffic
-* TCP Reno/Cubic severely underperform
+* TCP Reno and Cubic degrade significantly under these conditions
 
 ---
 
-## 🧩 Key Constraints
+## Key Constraints
 
 | Constraint          | Description                                |
 | ------------------- | ------------------------------------------ |
-| Sender-side only    | No router queue size or receiver internals |
-| No hidden variables | Must infer from TCP metrics                |
-| Model size          | ≤ **5 MB**                                 |
-| Inference time      | ≤ **5 ms / step**                          |
-| Deployment          | Must be IoT-friendly                       |
+| Sender‑side only    | No router queue size or receiver internals |
+| No hidden variables | Must infer only from TCP metrics           |
+| Model size          | ≤ 5 MB                                     |
+| Inference time      | ≤ 5 ms per step                            |
+| Deployment          | IoT‑friendly                               |
 
 ---
 
-## 🧠 Solution Architecture
+## Solution Architecture
 
 ```
 Application
-    │
-    ▼
-[ Antar-Drishti TCP Agent ]  ← Reinforcement Learning Policy
-    │
-    ▼
+    |
+    v
+[ Antar‑Drishti TCP Agent ]  <- Reinforcement Learning Policy
+    |
+    v
 TCP Socket Layer
-    │
-    ▼
+    |
+    v
 Wireless Network (loss + congestion)
 ```
 
-The agent replaces the traditional congestion window (cwnd) update logic.
+The agent replaces the traditional congestion‑window (cwnd) update logic.
 
 ---
 
-## 📊 Observations (State Space)
+## Observations (State Space)
 
-The agent only uses **standard TCP sender metrics**:
+The agent only uses standard TCP sender metrics:
 
-* RTT (smoothed)
+* Smoothed RTT
 * RTT variance
-* Packet loss rate (recent window)
-* ACK inter-arrival time
+* Recent packet loss rate
+* ACK inter‑arrival time
 * Current congestion window (cwnd)
 * Throughput estimate
-* In-flight packets
+* In‑flight packets
 
 No privileged network information is used.
 
 ---
 
-## 🎮 Actions (Control Space)
+## Actions (Control Space)
 
-The agent outputs one of:
+Discrete actions:
 
 * Increase cwnd (small / medium / aggressive)
 * Decrease cwnd (small / medium)
 * Keep cwnd unchanged
 
-Or alternatively:
+Or numerically:
 
 ```
 Δcwnd ∈ { -4, -2, -1, 0, +1, +2, +4 }
@@ -108,27 +108,9 @@ Or alternatively:
 
 ---
 
-## 🏆 Reward Function
+## Training Method
 
-The agent is trained to optimize:
-
-```
-Reward = α × Throughput − β × Latency − γ × Packet Loss − δ × Jitter
-```
-
-Where:
-
-* Throughput encourages aggressive utilization
-* Latency discourages queue buildup
-* Packet loss penalizes instability
-* Jitter improves real-time performance
-
----
-
-## 🧪 Training Method
-
-* Algorithm: **PPO / DQN / A2C (configurable)**
-* Environment: Custom network simulator (ns-3 / Mininet / custom Python env)
+* Environment: manual simulator (python)
 * Episodes include:
 
   * Random noise levels
@@ -138,143 +120,89 @@ Where:
 
 ---
 
-## ⚙️ Lightweight Model Design
 
-| Component   | Choice        |
-| ----------- | ------------- |
-| Network     | 2–3 layer MLP |
-| Hidden size | 64 neurons    |
-| Parameters  | < 500K        |
-| Model size  | < 2 MB        |
-| Inference   | < 1 ms        |
-
-Optimized using:
-
-* Quantization (INT8)
-* ONNX Runtime
-* TorchScript
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
-antar-drishti-tcp/
+antar-drishti/
 │
-├── agent/
-│   ├── model.py
-│   ├── policy.py
-│   ├── replay_buffer.py
-│   └── trainer.py
+├── README.md
 │
-├── tcp_wrapper/
-│   ├── tcp_agent.cc
-│   └── tcp_agent.h
+├── sim/                    # Simulation core (no RL here)
+│   ├── __init__.py
+│   ├── packet.py           # Packet data structure
+│   ├── sender.py           # Sender logic (rate, cwnd)
+│   ├── link.py             # Bandwidth, queue, noise model
+│   ├── receiver.py         # ACK generation
+│   └── environment.py      # Ties sender, link, receiver
 │
-├── simulator/
-│   ├── wireless_env.py
-│   └── network_model.py
+├── agents/                 # Control logic (pluggable)
+│   ├── __init__.py
+│   ├── base_agent.py       # Abstract interface
+│   ├── reno_agent.py       # Baseline implementation
+│   └── rl_agent.py         # Antar‑Drishti agent
 │
-├── models/
-│   └── antar_drishti.onnx
+├── metrics/
+│   ├── logger.py           # Throughput, RTT, loss tracking
+│   └── plots.py            # Visualization
 │
-├── evaluation/
-│   └── benchmark.py
+├── experiments/
+│   ├── run_baseline.py     # Reno vs noise
+│   └── run_rl.py           # RL experiments
 │
-└── README.md
+├── configs/
+│   ├── default.yaml        # Link params, noise, RTT
+│   └── stress.yaml
+│
+└── requirements.txt        # Minimal dependencies
 ```
 
----
+## Benchmarking
 
-## 🛠 Installation
-
-```bash
-git clone https://github.com/yourname/antar-drishti-tcp.git
-cd antar-drishti-tcp
-pip install -r requirements.txt
-```
-
----
-
-## 🏃 Running the Simulator
-
-```bash
-python simulator/wireless_env.py
-```
-
----
-
-## 🧪 Training the Agent
-
-```bash
-python agent/trainer.py
-```
-
----
-
-## 📈 Benchmarking
-
-Compare against:
+Compared against:
 
 * TCP Reno
-* TCP Cubic
-* TCP BBR
 
 Metrics:
 
 * Average throughput
-* 95th percentile latency
+* latency
 * Packet loss rate
 * Fairness
 
 ---
 
-## 🧠 Example Results
+## Deployment
 
-| Protocol          | Throughput    | Latency   | Loss     |
-| ----------------- | ------------- | --------- | -------- |
-| Reno              | 4.2 Mbps      | 180 ms    | 5.1%     |
-| Cubic             | 6.8 Mbps      | 130 ms    | 4.6%     |
-| BBR               | 8.1 Mbps      | 95 ms     | 3.9%     |
-| **Antar‑Drishti** | **11.4 Mbps** | **62 ms** | **1.7%** |
-
----
-
-## 🔐 Deployment
-
-Supports:
+Supported targets:
 
 * Linux TCP module integration
-* User-space TCP stack
+* User‑space TCP stacks
 * QUIC sender adaptation
-* IoT devices (ARM)
+* ARM‑based IoT devices
 
 ---
 
-## 🧘 Philosophy
+## Philosophy
 
-Just as **Antar‑Drishti** reveals truth beyond illusion, this agent:
-
-> Ignores false losses caused by noise and reacts only to true congestion.
+Just as *Antar‑Drishti* refers to inner clarity, the agent focuses on distinguishing real congestion from random wireless loss and responding only when necessary.
 
 ---
 
-## 📜 License
+## License
 
 MIT License
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-Pull requests are welcome. For major changes, please open an issue first.
-
----
-
-## 📧 Contact
-
-Built with ⚡ and 🧠 for next‑generation networks.
+Pull requests are welcome. For major changes, please open an issue first to discuss the proposal.
 
 ---
 
-**जय विजय – May your packets never be deceived.** 🚩
+## Contact
+
+Built for experimentation in next‑generation network congestion control.
+
+---
