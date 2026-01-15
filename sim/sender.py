@@ -85,4 +85,5 @@ class Sender:
         """
         Update sending rate.
         """
-        self.send_rate = max(1, self.send_rate + delta)
+        self.send_rate = max(1, self.send_rate + delta) 
+                      
