@@ -35,6 +35,7 @@ class Environment:
 
         # 3. Link processes packets
         delivered_packets, rtt, wireless_drops = self.link.step()
+        true_throughput = len(delivered_packets)
 
         # 4. Receiver schedules ACKs
         self.receiver.receive(
@@ -45,6 +46,7 @@ class Environment:
 
         # 5. Receiver delivers ACKs whose time has arrived
         acked_packets = self.receiver.get_acks(self.time)
+        acks_received = len(acked_packets)
 
         # 6. Sender processes ACKs
         self.sender.receive_acks(acked_packets, self.time)
@@ -52,8 +54,12 @@ class Environment:
         # 7. Sender infers loss
         inferred_loss = self.sender.detect_loss(self.time)
 
-        # 8. Collect metrics
+        # 8. Collect sender metrics
         metrics = self.sender.get_metrics()
+
+        # --- SEMANTIC FIX ---
+        metrics["throughput"] = true_throughput   # TRUE throughput (≤ capacity)
+        metrics["acks"] = acks_received            # ACK arrivals (can burst)
 
         # Optional extra info (for debugging / analysis)
         metrics.update({
