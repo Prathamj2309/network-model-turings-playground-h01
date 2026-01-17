@@ -90,11 +90,11 @@ class RLAgent(BaseAgent):
         How wasteful is the current sending rate?
         Dimensionless and environment-agnostic.
         """
-        ratio = send_rate / max(throughput, 1)
+        ratio = throughput/max(send_rate, 1)
 
-        if ratio <= 1.5:
+        if ratio > 0.6:
             return 0   # efficient
-        elif ratio <= 3.0:
+        elif ratio > 0.3:
             return 1   # moderate oversend
         else:
             return 2   # severe oversend
