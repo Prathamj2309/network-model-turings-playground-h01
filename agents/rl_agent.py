@@ -9,8 +9,8 @@ class RLAgent(BaseAgent):
     Tabular Q-learning agent for congestion control.
 
     State:
-      - Normalized queueing delay (4 RTT states)
-      - Relative loss ratio (3 loss states)
+      - RTT condition (5 states, including 'no signal')
+      - Relative loss ratio (3 states)
       - Send efficiency / oversend awareness (3 states)
 
     Actions:
@@ -58,19 +58,27 @@ class RLAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _discretize_rtt(self, avg_rtt):
+        """
+        5 RTT states:
+          0 = no RTT signal yet
+          1 = free-flow
+          2 = early queue
+          3 = queue knee
+          4 = heavy congestion
+        """
         if avg_rtt <= 0:
-            return 0  # no RTT sample yet
+            return 0  # no RTT signal (important!)
 
         q_delay_ratio = (avg_rtt - self.base_rtt) / self.base_rtt
 
         if q_delay_ratio < 0.1:
-            return 0  # free-flow
+            return 1
         elif q_delay_ratio < 0.4:
-            return 1  # early queue
+            return 2
         elif q_delay_ratio < 0.8:
-            return 2  # queue building (knee)
+            return 3
         else:
-            return 3  # heavy congestion
+            return 4
 
     def _discretize_loss(self, loss, send_rate):
         if send_rate <= 0:
@@ -79,38 +87,40 @@ class RLAgent(BaseAgent):
         loss_ratio = loss / send_rate
 
         if loss_ratio == 0:
-            return 0  # clean
+            return 0      # clean
         elif loss_ratio < 0.3:
-            return 1  # tolerable / wireless-like
+            return 1      # tolerable / wireless-like
         else:
-            return 2  # severe / congestion-like
+            return 2      # congestion-like
 
-    def _discretize_send_ratio(self, send_rate, throughput):
+    def _discretize_send_ratio(self, loss, throughput):
         """
         How wasteful is the current sending rate?
-        Dimensionless and environment-agnostic.
+        throughput / loss (dimensionless)
         """
-        ratio = throughput/max(send_rate, 1)
+        ratio = throughput / max(loss, 1)
 
-        if ratio > 0.6:
-            return 0   # efficient
-        elif ratio > 0.3:
-            return 1   # moderate oversend
+        if ratio >= 3:
+            return 0      # efficient
+        elif ratio >= 1.5:
+            return 1      # moderate oversend
+        elif ratio >= 0.5:
+            return 2      # severe oversend
         else:
-            return 2   # severe oversend
+            return 3
 
     def _get_state(self, observation):
-        rtt_state = self._discretize_rtt(observation["avg_rtt"])
-        loss_state = self._discretize_loss(
-            observation["loss"],
-            observation["send_rate"],
+        return (
+            self._discretize_rtt(observation["avg_rtt"]),
+            self._discretize_loss(
+                observation["loss"],
+                observation["send_rate"],
+            ),
+            self._discretize_send_ratio(
+                observation["loss"],
+                observation["throughput"],
+            ),
         )
-        send_ratio_state = self._discretize_send_ratio(
-            observation["send_rate"],
-            observation["throughput"],
-        )
-
-        return (rtt_state, loss_state, send_ratio_state)
 
     # ------------------------------------------------------------------
     # Reward
@@ -122,19 +132,24 @@ class RLAgent(BaseAgent):
         loss = observation["loss"]
         send_rate = observation["send_rate"]
 
-        # Normalized quantities
-        rtt_ratio = avg_rtt / self.base_rtt if avg_rtt > 0 else 1.0
+        # Normalized metrics
+        efficiency = throughput/max(send_rate, 1)
+        if avg_rtt > 0:
+            rtt_penalty = self.rtt_weight * ((avg_rtt / self.base_rtt) - 1.0)
+        else:
+            rtt_penalty = 0.0
+
         loss_ratio = loss / max(send_rate, 1)
-        oversend_ratio = send_rate / max(throughput, 1)
+        info_ratio = loss / max(throughput, 1)
 
         reward = (
-            + throughput
-            - self.rtt_weight * (rtt_ratio - 1.0)
-            - 1.1 * loss_ratio
-            - 0.40 * oversend_ratio
+            + 2.0 * efficiency
+            - rtt_penalty
+            - 1.2 * loss_ratio
+            - 1.2 * info_ratio    
         )
 
-        # Oscillation penalty (discourage thrashing)
+        # Oscillation penalty
         if self.prev_action is not None and avg_rtt > 0:
             reward -= self.osc_penalty * abs(action - self.prev_action)
 
@@ -159,24 +174,20 @@ class RLAgent(BaseAgent):
         # --- Q-learning update ---
         if self.prev_state is not None:
             reward = self._compute_reward(observation, self.prev_action)
-            self._ensure_state(self.prev_state)
-
             best_next_q = max(self.Q[state].values())
             old_q = self.Q[self.prev_state][self.prev_action]
 
             self.Q[self.prev_state][self.prev_action] = (
-                old_q
-                + self.alpha * (reward + self.gamma * best_next_q - old_q)
+                old_q + self.alpha * (reward + self.gamma * best_next_q - old_q)
             )
 
-        # --- Action selection (epsilon-greedy) ---
+        # --- Action selection ---
         if random.random() < self.epsilon:
-            action = random.choice([0, 1, 2])  # conservative exploration
+            action = random.choice([-2, -1, 0, 1, 2])  # conservative exploration
         else:
             best_q = max(self.Q[state].values())
             best_actions = [
-                a for a, q in self.Q[state].items()
-                if q == best_q
+                a for a, q in self.Q[state].items() if q == best_q
             ]
             action = random.choice(best_actions)
 
