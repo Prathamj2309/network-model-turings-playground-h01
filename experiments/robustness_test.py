@@ -11,8 +11,8 @@ from agents.rl_agent import RLAgent
 
 
 NUM_ENVS = 10
-TOTAL_STEPS = 500
-PRINT_LAST = 10
+TOTAL_STEPS = 1000
+PRINT_LAST = 15
 
 EMA_ALPHA = 0.1   # RTT smoothing factor
 
