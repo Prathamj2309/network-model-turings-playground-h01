@@ -37,11 +37,12 @@ def make_random_environment():
 
 
 def run_single_env(env, agent):
-    thr, loss = [], []
+    thr, loss, util = [], [], []
     ema_rtt_series = []
     history = []
 
     ema_rtt = None
+    capacity = env.link.capacity   # TRUE capacity (evaluation-only)
 
     for step in range(TOTAL_STEPS):
         metrics = env.step()
@@ -66,18 +67,22 @@ def run_single_env(env, agent):
 
         thr.append(metrics["throughput"])
         loss.append(metrics["loss"])
-        ema_rtt_series.append(ema_rtt if ema_rtt is not None else 0.0)
 
+        utilization = metrics["throughput"] / capacity
+        util.append(utilization)
+
+        ema_rtt_series.append(ema_rtt if ema_rtt is not None else 0.0)
         history.append((metrics, action, ema_rtt))
 
-    return thr, ema_rtt_series, loss, history
+    return thr, ema_rtt_series, loss, util, history
 
 
 def main():
-    all_thr, all_rtt, all_loss = [], [], []
+    all_thr, all_rtt, all_loss, all_util = [], [], [], []
 
     for i in range(NUM_ENVS):
         env, base_rtt = make_random_environment()
+        capacity = env.link.capacity
 
         agent = RLAgent(
             base_rtt=base_rtt,
@@ -86,21 +91,25 @@ def main():
             epsilon_decay=0.995,
         )
 
-        thr, ema_rtt, loss, history = run_single_env(env, agent)
+        thr, ema_rtt, loss, util, history = run_single_env(env, agent)
 
         all_thr.extend(thr)
         all_rtt.extend([x for x in ema_rtt if x > 0])
         all_loss.extend(loss)
+        all_util.extend(util)
 
-        print(f"\n=== Environment {i:02d} (last {PRINT_LAST} steps) ===")
-        print("Time | Rate | Thr | AvgRTT | Loss | Action")
-        print("-" * 55)
+        print(f"\n=== Environment {i:02d} (capacity={capacity}) (last {PRINT_LAST} steps) ===")
+        print("Time | Rate | Thr | Cap | Util | AvgRTT | Loss | Action")
+        print("-" * 75)
 
         for metrics, action, rtt_val in history[-PRINT_LAST:]:
+            u = metrics["throughput"] / capacity
             print(
                 f"{metrics['time']:>4} | "
                 f"{metrics['send_rate']:>4} | "
                 f"{metrics['throughput']:>3} | "
+                f"{capacity:>3} | "
+                f"{u:>4.2f} | "
                 f"{rtt_val:>6.2f} | "
                 f"{metrics['loss']:>4} | "
                 f"{action:>6}"
@@ -109,14 +118,16 @@ def main():
         print(
             f"Env {i:02d} Avg → "
             f"Thr={statistics.mean(thr):.2f}, "
+            f"Util={statistics.mean(util):.2f}, "
             f"RTT={statistics.mean([x for x in ema_rtt if x > 0]):.2f}, "
             f"Loss={statistics.mean(loss):.2f}"
         )
 
     print("\n=== GLOBAL ROBUSTNESS SUMMARY ===")
-    print(f"Avg Throughput : {statistics.mean(all_thr):.2f}")
-    print(f"Avg RTT        : {statistics.mean(all_rtt):.2f}")
-    print(f"Avg Loss       : {statistics.mean(all_loss):.2f}")
+    print(f"Avg Throughput  : {statistics.mean(all_thr):.2f}")
+    print(f"Avg Utilization : {statistics.mean(all_util):.2f}")
+    print(f"Avg RTT         : {statistics.mean(all_rtt):.2f}")
+    print(f"Avg Loss        : {statistics.mean(all_loss):.2f}")
 
 
 if __name__ == "__main__":

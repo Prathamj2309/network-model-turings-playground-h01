@@ -1,16 +1,7 @@
 import random
 from agents.base_agent import BaseAgent
 
-
 class RLAgent(BaseAgent):
-    """
-    Tabular Q-learning agent with:
-    - Relative (delta-based) rewards
-    - Information delivery awareness
-    - Loss-regime action masking
-    - Throughput anchoring to self-observed best (EMA-based, scale-free)
-    """
-
     def __init__(
         self,
         base_rtt: float,
@@ -25,83 +16,78 @@ class RLAgent(BaseAgent):
     ):
         self.base_rtt = base_rtt
         self.actions = actions
-
         self.alpha = alpha
         self.gamma = gamma
-
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
-
         self.osc_penalty = osc_penalty
         self.best_thr_ema_alpha = best_thr_ema_alpha
 
         self.Q = {}
 
-        # sender-side memory
+        # Sender-side memory
         self.prev_state = None
         self.prev_action = None
         self.prev_obs = None
         self.prev_send_rate = None
 
-        # throughput anchor
+        # Throughput anchor
         self.best_thr_ema = 0.0
+        
+        # [NEW] RTT Smoothing to ignore wireless noise
+        self.rtt_ema = base_rtt  
 
     # --------------------------------------------------
-    # State discretization (unchanged philosophy)
+    # State discretization
     # --------------------------------------------------
 
     def _discretize_rtt(self, avg_rtt):
+        # Use smoothed RTT for state to prevent state-flickering
         if avg_rtt <= 0:
             return 0
         ratio = (avg_rtt - self.base_rtt) / self.base_rtt
-        if ratio < 0.1:
-            return 1
-        elif ratio < 0.4:
-            return 2
-        elif ratio < 0.8:
-            return 3
-        else:
-            return 4
+        
+        # [Adjusted] Slightly tighter bins to detect buffer bloat earlier
+        if ratio < 0.05: return 0  # Very clean
+        elif ratio < 0.2: return 1 # Mild load
+        elif ratio < 0.5: return 2 # Heavy load
+        elif ratio < 1.0: return 3 # Buffer bloat
+        else: return 4             # Congestion collapse
 
+    # ... [Keep other discretizers: _discretize_efficiency, _discretize_rate_trend, etc.] ...
     def _discretize_efficiency(self, thr, rate):
         ratio = thr / max(rate, 1)
-        if ratio >= 0.7:
-            return 0
-        elif ratio >= 0.4:
-            return 1
-        else:
-            return 2
+        if ratio >= 0.7: return 0
+        elif ratio >= 0.4: return 1
+        else: return 2
 
     def _discretize_rate_trend(self, rate):
-        if self.prev_send_rate is None:
-            return 0
-        if rate > self.prev_send_rate:
-            return 1
-        elif rate < self.prev_send_rate:
-            return 2
-        else:
-            return 0
+        if self.prev_send_rate is None: return 0
+        if rate > self.prev_send_rate: return 1
+        elif rate < self.prev_send_rate: return 2
+        else: return 0
 
     def _discretize_delivery(self, thr, loss):
         delivery = thr / max(thr + loss, 1)
-        if delivery >= 0.6:
-            return 0
-        elif delivery >= 0.3:
-            return 1
-        else:
-            return 2
+        if delivery >= 0.6: return 0
+        elif delivery >= 0.3: return 1
+        else: return 2
 
     def _get_state(self, obs):
+        # [NEW] Update RTT EMA
+        # Alpha of 0.2 means we trust the history more than the instant spike
+        self.rtt_ema = 0.8 * self.rtt_ema + 0.2 * obs["avg_rtt"]
+
         return (
-            self._discretize_rtt(obs["avg_rtt"]),
+            self._discretize_rtt(self.rtt_ema), # Use EMA here
             self._discretize_efficiency(obs["throughput"], obs["send_rate"]),
             self._discretize_rate_trend(obs["send_rate"]),
             self._discretize_delivery(obs["throughput"], obs["loss"]),
         )
 
     # --------------------------------------------------
-    # Reward (RELATIVE + THROUGHPUT ANCHOR)
+    # Reward (Improved for Stability & Latency)
     # --------------------------------------------------
 
     def _compute_reward(self, obs):
@@ -111,62 +97,70 @@ class RLAgent(BaseAgent):
         p = self.prev_obs
         c = obs
 
-        # ---------- deltas ----------
+        # 1. Efficiency Delta
         eff_p = p["throughput"] / max(p["send_rate"], 1)
         eff_c = c["throughput"] / max(c["send_rate"], 1)
         d_eff = eff_c - eff_p
 
-        if p["avg_rtt"] > 0 and c["avg_rtt"] > 0:
+        # 2. RTT Delta (Relative Change)
+        if self.base_rtt > 0:
+            # Normalize by Base RTT to keep scale consistent
             d_rtt = (c["avg_rtt"] - p["avg_rtt"]) / self.base_rtt
+            
+            # [NEW] Absolute RTT Penalty (Fixes Buffer Bloat)
+            # Penalize simply for existing in a high-latency state
+            abs_rtt_penalty = (c["avg_rtt"] - self.base_rtt) / self.base_rtt
         else:
             d_rtt = 0.0
+            abs_rtt_penalty = 0.0
 
+        # 3. Delivery Delta
         del_p = p["throughput"] / max(p["throughput"] + p["loss"], 1)
         del_c = c["throughput"] / max(c["throughput"] + c["loss"], 1)
         d_del = del_c - del_p
 
+        # [Adjusted] Weights
         reward = (
             + 2.0 * d_eff
-            + 2.5 * d_del
-            - 1.5 * d_rtt
+            + 3.0 * d_del         # Increased priority on delivery
+            - 1.0 * d_rtt         # Penalize sudden spikes
+            - 0.5 * abs_rtt_penalty # [NEW] Constant pressure to drain queue
         )
 
-        # ---------- pathological delivery ----------
-        if del_c < 0.3:
-            reward -= 2.0 * (0.3 - del_c)
+        # Pathological delivery penalty
+        if del_c < 0.5: # [Adjusted] Stricter threshold
+            reward -= 5.0 * (0.5 - del_c)
 
-        # ---------- oscillation penalty ----------
+        # Oscillation penalty
         if self.prev_action is not None:
             reward -= self.osc_penalty * abs(self.prev_action)
 
-        # ---------- throughput anchoring (KEY ADDITION) ----------
+        # -------------------------------------------------------
+        # Throughput Anchor (Logic Fix)
+        # -------------------------------------------------------
         loss_ratio = c["loss"] / max(c["send_rate"], 1)
-        safe = (loss_ratio < 0.05) and (d_rtt <= 0.05)
+        
+        # [FIXED] Relaxed "Safe" definition
+        # If Loss is low, we tolerate slight RTT jitter (up to 15% delta)
+        # This prevents the Env 03 "Panic Drop"
+        safe = (loss_ratio < 0.05) and (d_rtt <= 0.15) 
 
         if safe and self.best_thr_ema > 0:
             thr_ratio = c["throughput"] / max(self.best_thr_ema, 1e-6)
 
-            # drifting down while safe is bad
+            # Drifting down while safe is bad
             if thr_ratio < 0.85:
-                reward -= 1.2 * (0.85 - thr_ratio)
+                reward -= 1.5 * (0.85 - thr_ratio)
 
-            # holding near best is good
-            elif thr_ratio > 0.95:
-                reward += 0.5 * (thr_ratio - 0.95)
+            # Holding near best is good
+            elif thr_ratio > 0.90:
+                reward += 1.0 * (thr_ratio - 0.90) # Increased incentive
 
         return reward
-
-    # --------------------------------------------------
-    # Utilities
-    # --------------------------------------------------
 
     def _ensure_state(self, s):
         if s not in self.Q:
             self.Q[s] = {a: 0.0 for a in self.actions}
-
-    # --------------------------------------------------
-    # Core RL with ACTION MASKING
-    # --------------------------------------------------
 
     def act(self, observation):
         state = self._get_state(observation)
@@ -217,7 +211,10 @@ class RLAgent(BaseAgent):
             )
 
         # -------- Bookkeeping --------
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        if self.epsilon > self.epsilon_min:
+            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        else:
+            self.epsilon = 0
 
         self.prev_state = state
         self.prev_action = action
