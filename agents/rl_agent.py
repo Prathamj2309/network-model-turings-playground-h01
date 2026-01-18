@@ -148,7 +148,7 @@ class RLAgent(BaseAgent):
 
             # drifting down while safe is bad
             if thr_ratio < 0.85:
-                reward -= 1.5 * (0.85 - thr_ratio)
+                reward -= 1.2 * (0.85 - thr_ratio)
 
             # holding near best is good
             elif thr_ratio > 0.95:
@@ -202,6 +202,10 @@ class RLAgent(BaseAgent):
             allowed_actions = [a for a in allowed_actions if a <= 0]
         elif loss_ratio > 0.08:
             allowed_actions = [a for a in allowed_actions if a <= 1]
+
+        if send_rate <= 0.1 * self.best_thr_ema and loss_ratio <= 0.08:
+            allowed_actions = [a for a in allowed_actions if a >= 0]
+
 
         # -------- Action selection --------
         if random.random() < self.epsilon:
