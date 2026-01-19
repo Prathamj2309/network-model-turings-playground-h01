@@ -103,7 +103,7 @@ def main():
         print("-" * 75)
 
         for metrics, action, rtt_val in history[-PRINT_LAST:]:
-            u = metrics["throughput"] / capacity
+            u = metrics["delivered_packets"] / capacity
             print(
                 f"{metrics['time']:>4} | "
                 f"{metrics['send_rate']:>4} | "
