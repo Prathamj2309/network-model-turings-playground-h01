@@ -41,8 +41,13 @@ def run_single_env(env, agent):
     ema_rtt_series = []
     history = []
 
+    # --- NEW: post-stabilization buffers ---
+    stab_thr, stab_loss, stab_util, stab_rtt = [], [], [], []
+
     ema_rtt = None
-    capacity = env.link.capacity   # TRUE capacity (evaluation-only)
+    capacity = env.link.capacity
+
+    stabilized = False  # NEW
 
     for step in range(TOTAL_STEPS):
         metrics = env.step()
@@ -65,16 +70,38 @@ def run_single_env(env, agent):
             else:
                 ema_rtt = (1 - EMA_ALPHA) * ema_rtt + EMA_ALPHA * current_rtt
 
+        utilization = metrics["throughput"] / capacity
+
+        # --- NEW: detect stabilization ---
+        if not stabilized and agent.epsilon == 0.0:
+            stabilized = True
+
+        # --- Collect stabilized-only stats ---
+        if stabilized:
+            stab_thr.append(metrics["throughput"])
+            stab_loss.append(metrics["loss"])
+            stab_util.append(utilization)
+            if ema_rtt is not None:
+                stab_rtt.append(ema_rtt)
+
+        # --- Full history (unchanged, for printing) ---
         thr.append(metrics["throughput"])
         loss.append(metrics["loss"])
-
-        utilization = metrics["throughput"] / capacity
         util.append(utilization)
-
         ema_rtt_series.append(ema_rtt if ema_rtt is not None else 0.0)
         history.append((metrics, action, ema_rtt))
 
-    return thr, ema_rtt_series, loss, util, history
+    return (
+        thr,
+        ema_rtt_series,
+        loss,
+        util,
+        history,
+        stab_thr,
+        stab_loss,
+        stab_util,
+        stab_rtt,
+    )
 
 
 def main():
@@ -91,12 +118,24 @@ def main():
             epsilon_decay=0.995,
         )
 
-        thr, ema_rtt, loss, util, history = run_single_env(env, agent)
+        (
+            thr,
+            ema_rtt,
+            loss,
+            util,
+            history,
+            stab_thr,
+            stab_loss,
+            stab_util,
+            stab_rtt,
+        ) = run_single_env(env, agent)
 
-        all_thr.extend(thr)
-        all_rtt.extend([x for x in ema_rtt if x > 0])
-        all_loss.extend(loss)
-        all_util.extend(util)
+        # --- GLOBAL (stabilized only) ---
+        if stab_thr:
+            all_thr.extend(stab_thr)
+            all_loss.extend(stab_loss)
+            all_util.extend(stab_util)
+            all_rtt.extend(stab_rtt)
 
         print(f"\n=== Environment {i:02d} (capacity={capacity}) (last {PRINT_LAST} steps) ===")
         print("Time | Rate | Thr | Cap | Util | AvgRTT | Loss | Action")
@@ -115,15 +154,19 @@ def main():
                 f"{action:>6}"
             )
 
-        print(
-            f"Env {i:02d} Avg → "
-            f"Thr={statistics.mean(thr):.2f}, "
-            f"Util={statistics.mean(util):.2f}, "
-            f"RTT={statistics.mean([x for x in ema_rtt if x > 0]):.2f}, "
-            f"Loss={statistics.mean(loss):.2f}"
-        )
+        if stab_thr:
+            print(
+                f"Env {i:02d} Stabilized Avg → "
+                f"Thr={statistics.mean(stab_thr):.2f}, "
+                f"Util={statistics.mean(stab_util):.2f}, "
+                f"RTT={statistics.mean(stab_rtt):.2f}, "
+                f"Loss={statistics.mean(stab_loss):.2f}"
+            )
+        else:
+            print(f"Env {i:02d} Stabilized Avg → (no stabilized steps)")
 
-    print("\n=== GLOBAL ROBUSTNESS SUMMARY ===")
+
+    print("\n=== GLOBAL ROBUSTNESS SUMMARY (POST-STABILIZATION) ===")
     print(f"Avg Throughput  : {statistics.mean(all_thr):.2f}")
     print(f"Avg Utilization : {statistics.mean(all_util):.2f}")
     print(f"Avg RTT         : {statistics.mean(all_rtt):.2f}")
