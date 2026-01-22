@@ -141,9 +141,9 @@ class RLAgent(BaseAgent):
         d_del = del_c - del_p
 
         reward = (
-            + 1.0 * d_eff
-            + 2.5 * d_del
-            - 1.5 * d_rtt
+            + 1.89 * d_eff
+            + 1.55 * d_del
+            - 1.06 * d_rtt
         )
 
         if self.epsilon == 0 and c["send_rate"] >= 1.2 * self.avg_thr and c["loss"] == 0 and p["loss"] == 0:
